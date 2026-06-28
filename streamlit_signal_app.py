@@ -11,7 +11,10 @@ Public-safe version:
 from __future__ import annotations
 
 import os
+import json
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -36,6 +39,7 @@ VIX_EMERGENCY = 55.0
 SOXS_HIGH_LOOKBACK = 20
 QQQ_MA_LOOKBACK = 20
 RSI_PERIOD = 14
+CLAUDE_MODEL = "claude-haiku-4-5"
 
 
 st.set_page_config(page_title="SOXS Signal", page_icon="📈", layout="wide")
@@ -161,6 +165,80 @@ def pct(x: float) -> str:
     return f"{x:.1%}"
 
 
+def build_weekly_brief_prompt(df: pd.DataFrame, sig: dict) -> str:
+    recent = df.tail(6)
+    qqq_week = recent["QQQ"].iloc[-1] / recent["QQQ"].iloc[0] - 1.0
+    soxs_week = recent["SOXS"].iloc[-1] / recent["SOXS"].iloc[0] - 1.0
+    vix_change = recent["VIX"].iloc[-1] - recent["VIX"].iloc[0]
+
+    return f"""
+You are writing a concise weekly market brief for a private manual trading dashboard.
+The strategy uses QQQ as the core asset and SOXS short exposure as a risk-controlled overlay.
+
+Do not give personalized financial advice. Do not tell the user to trade immediately.
+Explain the signal and the risk posture in plain English.
+
+Current signal:
+- Action: {sig["action"]}
+- Regime: {sig["regime"]}
+- Target SOXS short allocation: {pct(sig["target_short_alloc"])}
+- Reason: {sig["reason"]}
+- VIX: {sig["vix"]:.2f}
+- QQQ: {sig["qqq"]:.2f}
+- QQQ MA20: {sig["qqq_ma20"]:.2f}
+- QQQ RSI14: {sig["qqq_rsi14"]:.1f}
+- SOXS: {sig["soxs"]:.2f}
+- SOXS 20-day high: {sig["soxs_high20"]:.2f}
+- SOXS pullback from 20-day high: {pct(sig["soxs_pullback_from_high20"])}
+
+Last roughly one trading week:
+- QQQ return: {pct(qqq_week)}
+- SOXS return: {pct(soxs_week)}
+- VIX change: {vix_change:+.2f}
+
+Write exactly four short sections:
+1. Weekly read
+2. Current signal
+3. Risk watch
+4. What would change the signal
+""".strip()
+
+
+def generate_weekly_brief(df: pd.DataFrame, sig: dict) -> str:
+    api_key = get_secret("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "Add ANTHROPIC_API_KEY in Streamlit secrets to enable the weekly AI brief."
+
+    model = get_secret("CLAUDE_MODEL", CLAUDE_MODEL)
+    payload = {
+        "model": model,
+        "max_tokens": 700,
+        "messages": [{"role": "user", "content": build_weekly_brief_prompt(df, sig)}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Claude API error {exc.code}: {detail}") from exc
+
+    content = data.get("content", [])
+    if not content:
+        raise RuntimeError("Claude API returned no text.")
+    return content[0].get("text", "").strip()
+
+
 def render_dashboard() -> None:
     st.title("SOXS Manual Signal")
     st.caption("Manual guide only. No broker connection. No order execution.")
@@ -198,6 +276,12 @@ def render_dashboard() -> None:
     st.line_chart(df[["QQQ", "QQQ_MA20"]].tail(80))
     st.line_chart(df[["SOXS", "SOXS_MA5", "SOXS_MA20"]].tail(80))
     st.line_chart(df[["VIX"]].tail(80))
+
+    st.subheader("Weekly AI Brief")
+    st.caption("Optional. Calls Claude only when you press the button.")
+    if st.button("Generate weekly AI brief"):
+        with st.spinner("Generating weekly brief..."):
+            st.markdown(generate_weekly_brief(df, sig))
 
     st.subheader("Recent Data")
     st.dataframe(df.tail(20).round(2), use_container_width=True)

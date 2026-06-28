@@ -18,6 +18,15 @@ Add this app secret in Streamlit Cloud:
 SIGNAL_APP_PASSWORD = "your-password"
 ```
 
+Optional weekly Claude brief:
+
+```toml
+ANTHROPIC_API_KEY = "your-anthropic-api-key"
+CLAUDE_MODEL = "claude-haiku-4-5"
+```
+
+The weekly brief is generated only when you press the button in the app.
+
 ## Main File
 
 ```text
