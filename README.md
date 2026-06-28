@@ -26,6 +26,7 @@ CLAUDE_MODEL = "claude-haiku-4-5"
 ```
 
 The weekly brief is generated only when you press the button in the app.
+It also passes recent public AI, semiconductor, and mega-cap headlines into the prompt for QQQ trend context.
 
 ## Main File
 

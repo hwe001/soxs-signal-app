@@ -40,9 +40,28 @@ SOXS_HIGH_LOOKBACK = 20
 QQQ_MA_LOOKBACK = 20
 RSI_PERIOD = 14
 CLAUDE_MODEL = "claude-haiku-4-5"
+AI_NEWS_SYMBOLS = ["NVDA", "MSFT", "GOOGL", "META", "AMZN", "AVGO", "AMD", "TSM"]
 
 
 st.set_page_config(page_title="SOXS Signal", page_icon="📈", layout="wide")
+st.markdown(
+    """
+    <style>
+    div.stButton > button[kind="primary"] {
+        background-color: #1d4ed8;
+        border: 1px solid #1d4ed8;
+        color: white;
+        font-weight: 700;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #1e40af;
+        border-color: #1e40af;
+        color: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def get_secret(name: str, default: str = "") -> str:
@@ -204,7 +223,64 @@ Write exactly four short sections:
 """.strip()
 
 
-def generate_weekly_brief(df: pd.DataFrame, sig: dict) -> str:
+@st.cache_data(ttl=3600)
+def fetch_ai_news() -> list[dict]:
+    items = []
+    seen = set()
+    for symbol in AI_NEWS_SYMBOLS:
+        try:
+            for item in yf.Ticker(symbol).news[:5]:
+                content = item.get("content", {}) if isinstance(item.get("content", {}), dict) else {}
+                title = item.get("title") or content.get("title") or ""
+                title = title.strip()
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                published = item.get("providerPublishTime") or content.get("pubDate")
+                published_text = ""
+                if isinstance(published, (int, float)):
+                    published_text = datetime.fromtimestamp(published, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                elif isinstance(published, str):
+                    published_text = published[:10]
+                items.append(
+                    {
+                        "symbol": symbol,
+                        "title": title,
+                        "publisher": item.get("publisher") or content.get("provider", {}).get("displayName", ""),
+                        "published": published_text,
+                    }
+                )
+        except Exception:
+            continue
+    return items[:12]
+
+
+def format_news_for_prompt(news_items: list[dict]) -> str:
+    if not news_items:
+        return "No recent AI/semiconductor headlines were available from the public data source."
+    lines = []
+    for item in news_items:
+        date = f"{item['published']} | " if item.get("published") else ""
+        publisher = f" | {item['publisher']}" if item.get("publisher") else ""
+        lines.append(f"- {item['symbol']}: {date}{item['title']}{publisher}")
+    return "\n".join(lines)
+
+
+def build_weekly_brief_prompt_with_news(df: pd.DataFrame, sig: dict, news_items: list[dict]) -> str:
+    base_prompt = build_weekly_brief_prompt(df, sig)
+    return f"""
+{base_prompt}
+
+Recent AI / semiconductor / mega-cap headlines that may affect QQQ:
+{format_news_for_prompt(news_items)}
+
+Use the headlines only as context. Do not invent facts beyond these headlines.
+If the headlines are not clearly relevant, say that news context is limited.
+In section 3, mention whether AI-sector news appears supportive, neutral, or risky for QQQ trend.
+""".strip()
+
+
+def generate_weekly_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -> str:
     api_key = get_secret("ANTHROPIC_API_KEY", "")
     if not api_key:
         return "Add ANTHROPIC_API_KEY in Streamlit secrets to enable the weekly AI brief."
@@ -212,8 +288,8 @@ def generate_weekly_brief(df: pd.DataFrame, sig: dict) -> str:
     model = get_secret("CLAUDE_MODEL", CLAUDE_MODEL)
     payload = {
         "model": model,
-        "max_tokens": 700,
-        "messages": [{"role": "user", "content": build_weekly_brief_prompt(df, sig)}],
+        "max_tokens": 900,
+        "messages": [{"role": "user", "content": build_weekly_brief_prompt_with_news(df, sig, news_items)}],
     }
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
@@ -273,10 +349,16 @@ def render_dashboard() -> None:
     cols[3].metric("SOXS Pullback", pct(sig["soxs_pullback_from_high20"]))
 
     st.subheader("Weekly AI Brief")
-    st.caption("Optional. Calls Claude only when you press the button.")
-    if st.button("Generate weekly AI brief"):
+    st.caption("Optional. Calls Claude only when you press the button. Includes recent public AI-sector headlines.")
+    if st.button("Generate weekly AI brief", type="primary"):
         with st.spinner("Generating weekly brief..."):
-            st.markdown(generate_weekly_brief(df, sig))
+            news_items = fetch_ai_news()
+            st.markdown(generate_weekly_brief(df, sig, news_items))
+            if news_items:
+                with st.expander("Headlines used for this brief"):
+                    for item in news_items:
+                        date = f"{item['published']} | " if item.get("published") else ""
+                        st.write(f"{item['symbol']}: {date}{item['title']}")
 
     st.divider()
     st.line_chart(df[["QQQ", "QQQ_MA20"]].tail(80))
