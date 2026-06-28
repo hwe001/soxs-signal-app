@@ -7,7 +7,7 @@ Strategy (backtested over 10 years, see repo history for the analysis):
   50-day trend.
 - Overlay leg: short SQQQ at a fixed 40% weight whenever QQQ is above its
   50-day MA, harvesting leveraged-ETF decay alongside the long core. When
-  the trend breaks, the overlay is cut back to a small 5% floor rather than
+  the trend breaks, the overlay is cut back to a 20% floor rather than
   fully covered.
 
 This intentionally skips VIX-band gating, fast squeeze valves, and
@@ -43,7 +43,7 @@ CORE_FULL_ALLOC = 1.00
 CORE_DEFENSIVE_ALLOC = 0.75
 
 NORMAL_SHORT_ALLOC = 0.40
-TREND_BROKEN_SHORT_ALLOC = 0.05
+TREND_BROKEN_SHORT_ALLOC = 0.20
 
 QQQ_TREND_LOOKBACK = 50
 
@@ -138,7 +138,7 @@ def classify_signal(row: pd.Series) -> dict:
         return signal(
             "trend_broken", core_action, core_alloc,
             "REDUCE SQQQ SHORT TOWARD FLOOR", TREND_BROKEN_SHORT_ALLOC, "high",
-            "QQQ is below its 50-day trend; cut the short overlay back to a small floor "
+            "QQQ is below its 50-day trend; cut the short overlay back to a 20% floor "
             "position rather than fully covering it.", row,
         )
     return signal(
