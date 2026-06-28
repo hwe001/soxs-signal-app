@@ -272,16 +272,16 @@ def render_dashboard() -> None:
     cols[2].metric("SOXS 20D High", f"${sig['soxs_high20']:.2f}")
     cols[3].metric("SOXS Pullback", pct(sig["soxs_pullback_from_high20"]))
 
-    st.divider()
-    st.line_chart(df[["QQQ", "QQQ_MA20"]].tail(80))
-    st.line_chart(df[["SOXS", "SOXS_MA5", "SOXS_MA20"]].tail(80))
-    st.line_chart(df[["VIX"]].tail(80))
-
     st.subheader("Weekly AI Brief")
     st.caption("Optional. Calls Claude only when you press the button.")
     if st.button("Generate weekly AI brief"):
         with st.spinner("Generating weekly brief..."):
             st.markdown(generate_weekly_brief(df, sig))
+
+    st.divider()
+    st.line_chart(df[["QQQ", "QQQ_MA20"]].tail(80))
+    st.line_chart(df[["SOXS", "SOXS_MA5", "SOXS_MA20"]].tail(80))
+    st.line_chart(df[["VIX"]].tail(80))
 
     st.subheader("Recent Data")
     st.dataframe(df.tail(20).round(2), use_container_width=True)
