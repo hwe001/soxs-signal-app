@@ -1,4 +1,4 @@
-name: Run QQQ SQQQ Hedge Paper Bot
+name: Run QQQ SOXS Core Paper Bot
 
 on:
   schedule:
@@ -32,7 +32,10 @@ jobs:
     env:
       SQQQ_ALPACA_API_KEY_ID: ${{ secrets.SQQQ_ALPACA_API_KEY_ID }}
       SQQQ_ALPACA_API_SECRET_KEY: ${{ secrets.SQQQ_ALPACA_API_SECRET_KEY }}
+      SOXS_CORE_ALPACA_API_KEY_ID: ${{ secrets.SOXS_CORE_ALPACA_API_KEY_ID }}
+      SOXS_CORE_ALPACA_API_SECRET_KEY: ${{ secrets.SOXS_CORE_ALPACA_API_SECRET_KEY }}
       SQQQ_EXECUTE_ORDERS: ${{ secrets.SQQQ_EXECUTE_ORDERS }}
+      SOXS_CORE_EXECUTE_ORDERS: ${{ secrets.SOXS_CORE_EXECUTE_ORDERS }}
 
     steps:
       - name: Check out repo
@@ -48,13 +51,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run QQQ/SQQQ paper bot
+      - name: Run QQQ/SOXS paper bot
         shell: bash
         run: |
           args=()
 
           submit="${{ github.event.inputs.submit_paper_orders }}"
-          if [[ "$submit" == "true" || "$SQQQ_EXECUTE_ORDERS" == "true" ]]; then
+          if [[ "$submit" == "true" || "$SOXS_CORE_EXECUTE_ORDERS" == "true" || "$SQQQ_EXECUTE_ORDERS" == "true" ]]; then
             args+=(--execute --cancel-open-orders)
           fi
 

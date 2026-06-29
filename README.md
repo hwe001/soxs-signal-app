@@ -34,20 +34,24 @@ It also passes recent public AI, semiconductor, and mega-cap headlines into the 
 streamlit_signal_app.py
 ```
 
-## QQQ/SQQQ Paper Bot
+## QQQ/SOXS Core Paper Bot
 
-This repo also contains a separate Alpaca paper-trading runner for the
-QQQ core + short SQQQ hedge-overlay strategy from the
-`claude/qqq-sqqq-hedge-strategy-gv868s` branch.
+This repo also contains a separate Alpaca paper-trading runner for a
+QQQ core + short SOXS strategy.
 
 It uses separate GitHub Actions secrets from the SOXS bot:
 
 ```toml
-SQQQ_ALPACA_API_KEY_ID = "your-separate-paper-key-id"
-SQQQ_ALPACA_API_SECRET_KEY = "your-separate-paper-secret-key"
-SQQQ_EXECUTE_ORDERS = "false"
+SOXS_CORE_ALPACA_API_KEY_ID = "your-separate-paper-key-id"
+SOXS_CORE_ALPACA_API_SECRET_KEY = "your-separate-paper-secret-key"
+SOXS_CORE_EXECUTE_ORDERS = "false"
 ```
 
-Set `SQQQ_EXECUTE_ORDERS` to `"true"` only when scheduled workflow runs
-should submit Alpaca paper orders. The manual workflow can also be run as a
-dry run first.
+The target is fixed at 40% long QQQ plus 60% short SOXS. The bot still
+reports whether QQQ is above or below its 50-day moving average, but this
+comparison variant does not change target weights based on that filter.
+
+For backward compatibility, the older `SQQQ_ALPACA_*` and
+`SQQQ_EXECUTE_ORDERS` secrets still work. Set `SOXS_CORE_EXECUTE_ORDERS` to
+`"true"` only when scheduled workflow runs should submit Alpaca paper orders.
+The manual workflow can also be run as a dry run first.

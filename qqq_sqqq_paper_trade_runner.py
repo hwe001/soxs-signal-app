@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Paper-trading runner for the QQQ core + short SQQQ hedge-overlay strategy.
+Paper-trading runner for the QQQ core + short SOXS overlay strategy.
 
 This script places Alpaca PAPER orders only. It uses separate environment
-variable names from the SOXS bot so both bots can run side by side:
+variable names from the other SOXS bot so both bots can run side by side:
 
-- SQQQ_ALPACA_API_KEY_ID
-- SQQQ_ALPACA_API_SECRET_KEY
+- SOXS_CORE_ALPACA_API_KEY_ID or SQQQ_ALPACA_API_KEY_ID
+- SOXS_CORE_ALPACA_API_SECRET_KEY or SQQQ_ALPACA_API_SECRET_KEY
 
 By default this is a dry run. Pass --execute to submit paper orders.
 """
@@ -35,12 +35,12 @@ REBALANCE_END_NY = time(15, 59)
 
 
 def load_credentials() -> tuple[str, str]:
-    key_id = os.getenv("SQQQ_ALPACA_API_KEY_ID", "")
-    secret_key = os.getenv("SQQQ_ALPACA_API_SECRET_KEY", "")
+    key_id = os.getenv("SOXS_CORE_ALPACA_API_KEY_ID", "") or os.getenv("SQQQ_ALPACA_API_KEY_ID", "")
+    secret_key = os.getenv("SOXS_CORE_ALPACA_API_SECRET_KEY", "") or os.getenv("SQQQ_ALPACA_API_SECRET_KEY", "")
     if not key_id or not secret_key:
         sys.exit(
             "Missing Alpaca paper credentials. Add GitHub Actions secrets "
-            "SQQQ_ALPACA_API_KEY_ID and SQQQ_ALPACA_API_SECRET_KEY."
+            "SOXS_CORE_ALPACA_API_KEY_ID and SOXS_CORE_ALPACA_API_SECRET_KEY."
         )
     return key_id, secret_key
 
@@ -54,9 +54,9 @@ def fetch_price_history(symbol: str, period: str = "1y") -> pd.Series:
 
 def build_signal_row() -> pd.Series:
     qqq = fetch_price_history(CORE_SYMBOL)
-    sqqq = fetch_price_history(SHORT_SYMBOL)
-    df = pd.concat([qqq, sqqq], axis=1, sort=True).ffill().dropna()
-    df.columns = ["QQQ", "SQQQ"]
+    soxs = fetch_price_history(SHORT_SYMBOL)
+    df = pd.concat([qqq, soxs], axis=1, sort=True).ffill().dropna()
+    df.columns = ["QQQ", "SOXS"]
     df["QQQ_MA50"] = df["QQQ"].rolling(QQQ_TREND_LOOKBACK).mean()
     return df.dropna().iloc[-1]
 
@@ -121,7 +121,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", help="Submit Alpaca paper orders.")
     parser.add_argument("--force-run", action="store_true", help="Bypass the 3:45 PM New York time gate.")
-    parser.add_argument("--cancel-open-orders", action="store_true", help="Cancel existing open QQQ/SQQQ orders first.")
+    parser.add_argument("--cancel-open-orders", action="store_true", help="Cancel existing open QQQ/SOXS orders first.")
     args = parser.parse_args()
 
     if not should_run_now(args.force_run):
@@ -141,33 +141,33 @@ def main() -> None:
     row = build_signal_row()
     sig = classify_signal(row)
 
-    print("=== QQQ + SQQQ Hedge Paper Runner ===")
+    print("=== QQQ + SOXS Core Overlay Paper Runner ===")
     print(f"Execute orders: {args.execute} | Alpaca paper client: {paper_account}")
     print(f"Regime: {sig['regime']} | Confidence: {sig['confidence']}")
     print(f"Reason: {sig['reason']}")
     print(f"Account equity: ${equity:,.2f} | Buying power: ${float(account.buying_power):,.2f}")
     print(
         f"Targets -> QQQ core: {sig['core_target_alloc']:.0%} | "
-        f"SQQQ short overlay: {sig['overlay_target_short_alloc']:.0%} | "
+        f"SOXS short overlay: {sig['overlay_target_short_alloc']:.0%} | "
         f"Cash target: {sig['target_cash_alloc']:.0%}"
     )
 
     if not check_shortable(trading_client, SHORT_SYMBOL):
         print(f"{SHORT_SYMBOL} is not currently shortable/easy-to-borrow on this account.")
-        print("Skipping all orders because the strategy requires a short SQQQ overlay.")
+        print("Skipping all orders because the strategy requires a short SOXS overlay.")
         return
 
     prices = get_latest_prices(data_client, [CORE_SYMBOL, SHORT_SYMBOL])
     target_qqq_qty = math.floor(equity * sig["core_target_alloc"] / prices[CORE_SYMBOL])
-    target_sqqq_qty = -math.floor(equity * sig["overlay_target_short_alloc"] / prices[SHORT_SYMBOL])
+    target_short_qty = -math.floor(equity * sig["overlay_target_short_alloc"] / prices[SHORT_SYMBOL])
 
     current_qqq_qty = get_current_qty(trading_client, CORE_SYMBOL)
-    current_sqqq_qty = get_current_qty(trading_client, SHORT_SYMBOL)
+    current_short_qty = get_current_qty(trading_client, SHORT_SYMBOL)
 
     orders = [
         order for order in (
             compute_order(CORE_SYMBOL, target_qqq_qty, current_qqq_qty),
-            compute_order(SHORT_SYMBOL, target_sqqq_qty, current_sqqq_qty),
+            compute_order(SHORT_SYMBOL, target_short_qty, current_short_qty),
         ) if order is not None
     ]
 
@@ -178,8 +178,8 @@ def main() -> None:
         f"{target_qqq_qty:12.0f} {describe(orders, CORE_SYMBOL):>14s}"
     )
     print(
-        f"{SHORT_SYMBOL:6s} {prices[SHORT_SYMBOL]:10.2f} {current_sqqq_qty:12.0f} "
-        f"{target_sqqq_qty:12.0f} {describe(orders, SHORT_SYMBOL):>14s}"
+        f"{SHORT_SYMBOL:6s} {prices[SHORT_SYMBOL]:10.2f} {current_short_qty:12.0f} "
+        f"{target_short_qty:12.0f} {describe(orders, SHORT_SYMBOL):>14s}"
     )
 
     if not orders:
@@ -187,7 +187,7 @@ def main() -> None:
         return
 
     if not args.execute:
-        print("\nDry run only. Set SQQQ_EXECUTE_ORDERS=true or workflow input=true to submit paper orders.")
+        print("\nDry run only. Set SOXS_CORE_EXECUTE_ORDERS=true or workflow input=true to submit paper orders.")
         return
 
     for order in orders:
