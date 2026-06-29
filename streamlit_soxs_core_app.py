@@ -36,24 +36,21 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-
-CORE_SYMBOL = "QQQ"
-SHORT_SYMBOL = "SOXS"
-VIX_SYMBOL = "^VIX"
-
-CORE_ALLOC = 0.40
-
-NORMAL_SHORT_ALLOC = 0.60
-TREND_BROKEN_SHORT_ALLOC = 0.15
-
-QQQ_TREND_LOOKBACK = 50
+from soxs_core_strategy import (
+    CORE_SYMBOL,
+    SHORT_SYMBOL,
+    VIX_SYMBOL,
+    CORE_ALLOC,
+    NORMAL_SHORT_ALLOC,
+    TREND_BROKEN_SHORT_ALLOC,
+    QQQ_TREND_LOOKBACK,
+    classify_signal,
+)
 
 
 st.set_page_config(page_title="QQQ Core + SOXS Overlay Signal", page_icon="🩳", layout="wide")
@@ -105,49 +102,6 @@ def build_data() -> pd.DataFrame:
     return df.dropna()
 
 
-def signal(
-    regime: str,
-    overlay_action: str,
-    short_alloc: float,
-    confidence: str,
-    reason: str,
-    row: pd.Series,
-) -> dict:
-    cash_alloc = 1.0 - CORE_ALLOC - short_alloc
-    return {
-        "timestamp_ny": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"),
-        "regime": regime,
-        "core_action": "HOLD CORE QQQ",
-        "core_target_alloc": CORE_ALLOC,
-        "overlay_action": overlay_action,
-        "overlay_target_short_alloc": short_alloc,
-        "target_cash_alloc": cash_alloc,
-        "confidence": confidence,
-        "reason": reason,
-        "qqq": float(row["QQQ"]),
-        "qqq_ma50": float(row["QQQ_MA50"]),
-        "qqq_below_ma50": bool(float(row["QQQ"]) < float(row["QQQ_MA50"])),
-        "soxs": float(row["SOXS"]),
-        "vix": float(row["VIX"]),
-    }
-
-
-def classify_signal(row: pd.Series) -> dict:
-    qqq_below_ma50 = float(row["QQQ"]) < float(row["QQQ_MA50"])
-
-    if qqq_below_ma50:
-        return signal(
-            "trend_broken", "REDUCE SOXS SHORT TOWARD FLOOR", TREND_BROKEN_SHORT_ALLOC, "high",
-            "QQQ is below its 50-day trend; cut the short SOXS overlay back to a 15% floor "
-            "rather than fully covering it. The 40% QQQ core is held unchanged.", row,
-        )
-    return signal(
-        "normal", "HOLD / ADD SOXS SHORT TOWARD TARGET", NORMAL_SHORT_ALLOC, "medium",
-        "QQQ is above its 50-day trend; hold the full 60% short SOXS overlay to harvest "
-        "leveraged-ETF decay alongside the 40% QQQ core.", row,
-    )
-
-
 def pct(x: float) -> str:
     return f"{x:.1%}"
 
@@ -161,7 +115,8 @@ def render_dashboard() -> None:
         st.rerun()
 
     df = build_data()
-    sig = classify_signal(df.iloc[-1])
+    last_row = df.iloc[-1]
+    sig = classify_signal(last_row)
 
     st.subheader(sig["overlay_action"])
     st.write(sig["reason"])
@@ -177,7 +132,7 @@ def render_dashboard() -> None:
     cols[0].metric("QQQ", f"${sig['qqq']:.2f}")
     cols[1].metric("QQQ MA50", f"${sig['qqq_ma50']:.2f}")
     cols[2].metric("QQQ Below MA50", "Yes" if sig["qqq_below_ma50"] else "No")
-    cols[3].metric("VIX (context only)", f"{sig['vix']:.2f}")
+    cols[3].metric("VIX (context only)", f"{last_row['VIX']:.2f}")
 
     st.divider()
     st.line_chart(df[["QQQ", "QQQ_MA50"]].tail(180))

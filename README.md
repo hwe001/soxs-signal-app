@@ -1,14 +1,19 @@
 # Signal Dashboards
 
-Public Streamlit dashboards for manual trading signal checks.
+Public Streamlit dashboards for manual trading signal checks, plus one
+opt-in paper-trading execution script.
 
-All apps:
+The three Streamlit apps:
 
 - Pull public market data from Yahoo Finance.
 - Show a manual signal for entry/cover decisions.
 - Do not connect to Alpaca.
 - Do not place trades.
 - Do not contain broker keys.
+
+`paper_trade_runner.py` is the exception: it connects to Alpaca's PAPER
+trading API only and places orders to rebalance to the
+`streamlit_soxs_core_app.py` signal. See that section below.
 
 ## Apps
 
@@ -78,6 +83,33 @@ CAGR and deepens the max drawdown beyond the original elaborate logic's,
 so this remains a higher-risk configuration overall, not a strict
 improvement on every axis.
 
+## Paper Trading Runner (`paper_trade_runner.py`)
+
+Connects to Alpaca's **paper** trading API only and rebalances the account
+to the exact signal from `streamlit_soxs_core_app.py` / `soxs_core_strategy.py`:
+40% long QQQ (fixed) plus short SOXS at 60% (normal) or 15% (QQQ below its
+50-day MA), sized in whole shares.
+
+- Refuses to run if the connected account isn't a paper account.
+- Refuses to run if SOXS isn't currently shortable/easy-to-borrow.
+- Defaults to a dry run that only prints the orders it would place — pass
+  `--execute` to actually submit them.
+- Rebalances fully to target weights on every run; intended to be run once
+  per trading day (e.g. via cron).
+
+```bash
+python paper_trade_runner.py            # dry run, prints intended orders
+python paper_trade_runner.py --execute  # places the orders
+```
+
+Add your Alpaca **paper** keys (not live keys) to `.streamlit/secrets.toml`
+(already gitignored):
+
+```toml
+ALPACA_API_KEY_ID = "your-paper-key-id"
+ALPACA_API_SECRET_KEY = "your-paper-secret-key"
+```
+
 ## Streamlit Secrets
 
 Add this app secret in Streamlit Cloud:
@@ -92,4 +124,6 @@ SIGNAL_APP_PASSWORD = "your-password"
 streamlit_signal_app.py
 streamlit_qqq_sqqq_app.py
 streamlit_soxs_core_app.py
+soxs_core_strategy.py
+paper_trade_runner.py
 ```
