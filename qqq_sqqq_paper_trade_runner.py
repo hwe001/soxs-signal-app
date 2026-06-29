@@ -153,7 +153,9 @@ def main() -> None:
     )
 
     if not check_shortable(trading_client, SHORT_SYMBOL):
-        sys.exit(f"{SHORT_SYMBOL} is not currently shortable/easy-to-borrow on this account.")
+        print(f"{SHORT_SYMBOL} is not currently shortable/easy-to-borrow on this account.")
+        print("Skipping all orders because the strategy requires a short SQQQ overlay.")
+        return
 
     prices = get_latest_prices(data_client, [CORE_SYMBOL, SHORT_SYMBOL])
     target_qqq_qty = math.floor(equity * sig["core_target_alloc"] / prices[CORE_SYMBOL])
