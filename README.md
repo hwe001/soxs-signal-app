@@ -49,6 +49,29 @@ market would have cost -50.1% vs. buy-and-hold's -32.6% — higher
 absolute return, but the risk-adjusted edge over plain buy-and-hold is
 thin at this floor size.
 
+### QQQ/SQQQ Paper Bot (`qqq_sqqq_paper_trade_runner.py`)
+
+Connects to Alpaca's **paper** trading API only and rebalances to the
+QQQ/SQQQ dashboard signal:
+
+- QQQ core: 100% when QQQ is above its 50-day MA, 75% when below.
+- SQQQ short overlay: 40% when QQQ is above its 50-day MA, 20% floor when below.
+- The strategy logic is intentionally kept the same as the dashboard so this
+  can be compared cleanly against other bots.
+
+This bot uses separate GitHub Actions secrets from the SOXS bot:
+
+```toml
+SQQQ_ALPACA_API_KEY_ID = "your-separate-paper-key-id"
+SQQQ_ALPACA_API_SECRET_KEY = "your-separate-paper-secret-key"
+SQQQ_EXECUTE_ORDERS = "false"
+```
+
+Set `SQQQ_EXECUTE_ORDERS` to `"true"` only when you want scheduled workflow
+runs to submit Alpaca paper orders. Manual workflow runs can also choose
+whether to submit paper orders and whether to bypass the 3:45 PM New York
+time gate for testing.
+
 ### QQQ Core + Short SOXS Overlay (`streamlit_soxs_core_app.py`)
 
 Core leg: long QQQ at a fixed 40% weight, held regardless of regime.
