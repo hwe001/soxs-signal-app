@@ -42,6 +42,30 @@ RSI_PERIOD = 14
 CLAUDE_MODEL = "claude-haiku-4-5"
 AI_NEWS_SYMBOLS = ["NVDA", "MSFT", "GOOGL", "META", "AMZN", "AVGO", "AMD", "TSM"]
 
+# Core-satellite strategy: SPY is the long-term core hold, HIVE is the
+# actively-traded crypto-mining satellite, sized off the BTC trend.
+LONG_TERM_SYMBOL = "SPY"
+TRADE_SYMBOL = "HIVE"
+CRYPTO_PROXY_SYMBOL = "BTC-USD"
+
+SPY_MA_LONG_LOOKBACK = 200
+SPY_DIP_ALERT = -0.10
+SPY_BEAR_ALERT = -0.20
+
+HIVE_MA_SHORT_LOOKBACK = 20
+HIVE_MA_LONG_LOOKBACK = 50
+HIVE_HIGH_LOOKBACK = 20
+
+BTC_MA_SHORT_LOOKBACK = 50
+BTC_MA_LONG_LOOKBACK = 200
+
+HIVE_NORMAL_ALLOC = 0.20
+HIVE_CAUTION_ALLOC = 0.10
+HIVE_DANGER_ALLOC = 0.05
+HIVE_EMERGENCY_ALLOC = 0.00
+
+CRYPTO_NEWS_SYMBOLS = ["HIVE", "BTC-USD", "MARA", "RIOT", "COIN"]
+
 
 st.set_page_config(page_title="SOXS Signal", page_icon="📈", layout="wide")
 st.markdown(
@@ -180,6 +204,131 @@ def classify_signal(row: pd.Series) -> dict:
     return signal("normal", action, "medium", NORMAL_SHORT_ALLOC, reason, row)
 
 
+def build_spy_data() -> pd.DataFrame:
+    spy = fetch_history(LONG_TERM_SYMBOL, period="3y")
+    df = spy.to_frame(name="SPY")
+    df["SPY_MA200"] = df["SPY"].rolling(SPY_MA_LONG_LOOKBACK).mean()
+    df["SPY_ATH"] = df["SPY"].cummax()
+    df["SPY_DRAWDOWN"] = df["SPY"] / df["SPY_ATH"] - 1.0
+    df["SPY_VS_MA200"] = df["SPY"] / df["SPY_MA200"] - 1.0
+    return df.dropna()
+
+
+def build_btc_data() -> pd.DataFrame:
+    btc = fetch_history(CRYPTO_PROXY_SYMBOL, period="3y")
+    df = btc.to_frame(name="BTC")
+    df["BTC_MA50"] = df["BTC"].rolling(BTC_MA_SHORT_LOOKBACK).mean()
+    df["BTC_MA200"] = df["BTC"].rolling(BTC_MA_LONG_LOOKBACK).mean()
+    return df.dropna()
+
+
+def build_hive_data() -> pd.DataFrame:
+    hive = fetch_history(TRADE_SYMBOL, period="1y")
+    df = hive.to_frame(name="HIVE")
+    df["HIVE_MA20"] = df["HIVE"].rolling(HIVE_MA_SHORT_LOOKBACK).mean()
+    df["HIVE_MA50"] = df["HIVE"].rolling(HIVE_MA_LONG_LOOKBACK).mean()
+    df["HIVE_RSI14"] = rsi(df["HIVE"])
+    df["HIVE_HIGH20"] = df["HIVE"].rolling(HIVE_HIGH_LOOKBACK).max()
+    df["HIVE_PULLBACK_FROM_HIGH20"] = df["HIVE"] / df["HIVE_HIGH20"] - 1.0
+    return df.dropna()
+
+
+def classify_spy_core_signal(row: pd.Series) -> dict:
+    spy = float(row["SPY"])
+    spy_ma200 = float(row["SPY_MA200"])
+    drawdown = float(row["SPY_DRAWDOWN"])
+    vs_ma200 = float(row["SPY_VS_MA200"])
+
+    if drawdown <= SPY_BEAR_ALERT:
+        action = "ACCUMULATE AGGRESSIVELY; DO NOT SELL"
+        regime = "bear_dip"
+        reason = "SPY is 20%+ below its all-time high. This is historically where long-term DCA pays off most; keep contributing on schedule and never sell the core position."
+    elif drawdown <= SPY_DIP_ALERT:
+        action = "ACCUMULATE EXTRA ON DIP; DO NOT SELL"
+        regime = "dip"
+        reason = "SPY is in a meaningful pullback from its high. Add above your normal DCA amount if you have spare cash; the core position is untouched either way."
+    elif vs_ma200 < 0:
+        action = "HOLD; CONTINUE REGULAR DCA"
+        regime = "soft"
+        reason = "SPY is mildly below its 200-day average. Stay the course with scheduled contributions; no need to react."
+    else:
+        action = "HOLD CORE; CONTINUE REGULAR DCA"
+        regime = "uptrend"
+        reason = "SPY is at or above its long-term trend. The core position keeps compounding; no action needed beyond your normal contribution schedule."
+
+    return {
+        "timestamp_ny": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"),
+        "regime": regime,
+        "action": action,
+        "reason": reason,
+        "spy": spy,
+        "spy_ma200": spy_ma200,
+        "spy_drawdown_from_ath": drawdown,
+        "spy_vs_ma200": vs_ma200,
+    }
+
+
+def classify_hive_signal(hive_row: pd.Series, btc_row: pd.Series, vix: float) -> dict:
+    btc = float(btc_row["BTC"])
+    btc_ma50 = float(btc_row["BTC_MA50"])
+    btc_ma200 = float(btc_row["BTC_MA200"])
+    hive = float(hive_row["HIVE"])
+    hive_ma20 = float(hive_row["HIVE_MA20"])
+    hive_ma50 = float(hive_row["HIVE_MA50"])
+    hive_rsi = float(hive_row["HIVE_RSI14"])
+    hive_high20 = float(hive_row["HIVE_HIGH20"])
+    hive_pullback = float(hive_row["HIVE_PULLBACK_FROM_HIGH20"])
+
+    btc_bull = btc > btc_ma50 and btc_ma50 > btc_ma200
+    btc_bear = btc < btc_ma200
+    btc_pullback_in_uptrend = (not btc_bull) and (not btc_bear) and btc_ma50 > btc_ma200
+    hive_at_high = hive >= hive_high20 * 0.98
+    hive_above_trend = hive > hive_ma20 and hive_ma20 > hive_ma50
+
+    if vix >= VIX_EMERGENCY:
+        regime, action, alloc = "emergency", "EXIT / FLATTEN HIVE", HIVE_EMERGENCY_ALLOC
+        reason = "Market-wide crisis VIX. High-beta names like HIVE fall hardest in broad liquidations; step aside."
+    elif vix >= VIX_DANGER:
+        regime, action, alloc = "danger", "REDUCE HIVE; DO NOT ADD", HIVE_DANGER_ALLOC
+        reason = "VIX is very elevated. Trim the satellite position and avoid adding into a panicky tape."
+    elif btc_bear:
+        regime, action, alloc = "btc_bear", "REDUCE / AVOID NEW HIVE LONGS", HIVE_DANGER_ALLOC
+        reason = "BTC is below its 200-day average. Bitcoin miners tend to underperform and over-correct versus BTC itself in downtrends."
+    elif vix >= VIX_CAUTION:
+        regime, action, alloc = "caution", "HOLD SMALL; DO NOT ADD", HIVE_CAUTION_ALLOC
+        reason = "VIX is elevated. Wait for a calmer tape before adding risk to the satellite sleeve."
+    elif hive_at_high and hive_rsi > 75:
+        regime, action, alloc = "hive_spike", "HOLD; DO NOT CHASE THE SPIKE", HIVE_CAUTION_ALLOC
+        reason = "HIVE is near a 20-day high and short-term overbought. Let it cool off before adding more."
+    elif btc_bull and hive_above_trend and hive_rsi < 70:
+        regime, action, alloc = "normal", "ADD / HOLD HIVE TOWARD TARGET", HIVE_NORMAL_ALLOC
+        reason = "BTC is in a confirmed uptrend and HIVE is trading above its short and medium-term averages."
+    elif btc_pullback_in_uptrend:
+        regime, action, alloc = "btc_pullback", "HOLD SMALL; WAIT FOR HIVE TO RECLAIM ITS 20-DAY MA", HIVE_CAUTION_ALLOC
+        reason = "BTC dipped below its 50-day average inside a longer uptrend. Wait for HIVE to reclaim its short-term trend before adding."
+    else:
+        regime, action, alloc = "neutral", "HOLD; WAIT FOR CONFIRMATION", HIVE_CAUTION_ALLOC
+        reason = "Trend signals are mixed between BTC and HIVE. Avoid adding until both line up."
+
+    return {
+        "timestamp_ny": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"),
+        "regime": regime,
+        "action": action,
+        "target_hive_alloc": alloc,
+        "reason": reason,
+        "hive": hive,
+        "hive_ma20": hive_ma20,
+        "hive_ma50": hive_ma50,
+        "hive_rsi14": hive_rsi,
+        "hive_high20": hive_high20,
+        "hive_pullback_from_high20": hive_pullback,
+        "btc": btc,
+        "btc_ma50": btc_ma50,
+        "btc_ma200": btc_ma200,
+        "vix": vix,
+    }
+
+
 def pct(x: float) -> str:
     return f"{x:.1%}"
 
@@ -280,7 +429,7 @@ In section 3, mention whether AI-sector news appears supportive, neutral, or ris
 """.strip()
 
 
-def generate_weekly_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -> str:
+def call_claude(prompt: str) -> str:
     api_key = get_secret("ANTHROPIC_API_KEY", "")
     if not api_key:
         return "Add ANTHROPIC_API_KEY in Streamlit secrets to enable the weekly AI brief."
@@ -289,7 +438,7 @@ def generate_weekly_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -
     payload = {
         "model": model,
         "max_tokens": 900,
-        "messages": [{"role": "user", "content": build_weekly_brief_prompt_with_news(df, sig, news_items)}],
+        "messages": [{"role": "user", "content": prompt}],
     }
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
@@ -315,13 +464,95 @@ def generate_weekly_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -
     return content[0].get("text", "").strip()
 
 
-def render_dashboard() -> None:
-    st.title("SOXS Manual Signal")
-    st.caption("Manual guide only. No broker connection. No order execution.")
+def generate_weekly_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -> str:
+    return call_claude(build_weekly_brief_prompt_with_news(df, sig, news_items))
 
-    if st.button("Refresh market data"):
-        st.cache_data.clear()
-        st.rerun()
+
+@st.cache_data(ttl=3600)
+def fetch_crypto_news() -> list[dict]:
+    items = []
+    seen = set()
+    for symbol in CRYPTO_NEWS_SYMBOLS:
+        try:
+            for item in yf.Ticker(symbol).news[:5]:
+                content = item.get("content", {}) if isinstance(item.get("content", {}), dict) else {}
+                title = item.get("title") or content.get("title") or ""
+                title = title.strip()
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                published = item.get("providerPublishTime") or content.get("pubDate")
+                published_text = ""
+                if isinstance(published, (int, float)):
+                    published_text = datetime.fromtimestamp(published, ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                elif isinstance(published, str):
+                    published_text = published[:10]
+                items.append(
+                    {
+                        "symbol": symbol,
+                        "title": title,
+                        "publisher": item.get("publisher") or content.get("provider", {}).get("displayName", ""),
+                        "published": published_text,
+                    }
+                )
+        except Exception:
+            continue
+    return items[:12]
+
+
+def build_hive_spy_brief_prompt(spy_sig: dict, hive_sig: dict, news_items: list[dict]) -> str:
+    return f"""
+You are writing a concise weekly brief for a private manual trading dashboard.
+The strategy is core-satellite: SPY is a long-term buy-and-hold core position that is
+never sold, and HIVE (a Bitcoin mining stock) is a small, actively-traded satellite
+sized off the Bitcoin trend and overall market volatility.
+
+Do not give personalized financial advice. Do not tell the user to trade immediately.
+Explain the signal and the risk posture in plain English.
+
+SPY core position:
+- Action: {spy_sig["action"]}
+- Regime: {spy_sig["regime"]}
+- Reason: {spy_sig["reason"]}
+- SPY: {spy_sig["spy"]:.2f}
+- SPY 200-day MA: {spy_sig["spy_ma200"]:.2f}
+- SPY drawdown from all-time high: {pct(spy_sig["spy_drawdown_from_ath"])}
+
+HIVE satellite position:
+- Action: {hive_sig["action"]}
+- Regime: {hive_sig["regime"]}
+- Target HIVE allocation (of the trading sleeve): {pct(hive_sig["target_hive_alloc"])}
+- Reason: {hive_sig["reason"]}
+- HIVE: {hive_sig["hive"]:.2f}
+- HIVE 20-day MA: {hive_sig["hive_ma20"]:.2f}
+- HIVE 50-day MA: {hive_sig["hive_ma50"]:.2f}
+- HIVE RSI14: {hive_sig["hive_rsi14"]:.1f}
+- BTC: {hive_sig["btc"]:.0f}
+- BTC 50-day MA: {hive_sig["btc_ma50"]:.0f}
+- BTC 200-day MA: {hive_sig["btc_ma200"]:.0f}
+- VIX: {hive_sig["vix"]:.2f}
+
+Recent HIVE / Bitcoin mining headlines:
+{format_news_for_prompt(news_items)}
+
+Use the headlines only as context. Do not invent facts beyond these headlines.
+If the headlines are not clearly relevant, say that news context is limited.
+
+Write exactly four short sections:
+1. Core position read (SPY)
+2. Satellite signal (HIVE)
+3. Risk watch
+4. What would change the signal
+""".strip()
+
+
+def generate_hive_spy_brief(spy_sig: dict, hive_sig: dict, news_items: list[dict]) -> str:
+    return call_claude(build_hive_spy_brief_prompt(spy_sig, hive_sig, news_items))
+
+
+def render_soxs_tab() -> None:
+    st.subheader("SOXS Manual Signal")
+    st.caption("Manual guide only. No broker connection. No order execution.")
 
     df = build_data()
     sig = classify_signal(df.iloc[-1])
@@ -350,7 +581,7 @@ def render_dashboard() -> None:
 
     st.subheader("Weekly AI Brief")
     st.caption("Optional. Calls Claude only when you press the button. Includes recent public AI-sector headlines.")
-    if st.button("Generate weekly AI brief", type="primary"):
+    if st.button("Generate weekly AI brief", type="primary", key="soxs_brief"):
         with st.spinner("Generating weekly brief..."):
             news_items = fetch_ai_news()
             st.markdown(generate_weekly_brief(df, sig, news_items))
@@ -373,7 +604,103 @@ def render_dashboard() -> None:
         data=pd.Series(sig).to_json(indent=2),
         file_name="soxs_manual_signal.json",
         mime="application/json",
+        key="soxs_download",
     )
+
+
+def render_hive_spy_tab() -> None:
+    st.subheader("HIVE Trading + SPY Long-Term Core")
+    st.caption(
+        "Core-satellite strategy: SPY is a buy-and-hold core that is never sold; "
+        "HIVE is a small, actively-traded satellite sized off the Bitcoin trend. "
+        "Manual guide only. No broker connection. No order execution."
+    )
+
+    spy_df = build_spy_data()
+    btc_df = build_btc_data()
+    hive_df = build_hive_data()
+    vix_value = float(fetch_history(VIX_SYMBOL).iloc[-1])
+
+    spy_sig = classify_spy_core_signal(spy_df.iloc[-1])
+    hive_sig = classify_hive_signal(hive_df.iloc[-1], btc_df.iloc[-1], vix_value)
+
+    st.markdown("### SPY core (long-term hold)")
+    st.subheader(spy_sig["action"])
+    st.write(spy_sig["reason"])
+    st.caption(f"New York time: {spy_sig['timestamp_ny']}")
+
+    cols = st.columns(4)
+    cols[0].metric("Regime", spy_sig["regime"])
+    cols[1].metric("SPY", f"${spy_sig['spy']:.2f}")
+    cols[2].metric("SPY MA200", f"${spy_sig['spy_ma200']:.2f}")
+    cols[3].metric("Drawdown from ATH", pct(spy_sig["spy_drawdown_from_ath"]))
+
+    st.line_chart(spy_df[["SPY", "SPY_MA200"]].tail(252))
+
+    st.divider()
+
+    st.markdown("### HIVE satellite (active trading signal)")
+    st.subheader(hive_sig["action"])
+    st.write(hive_sig["reason"])
+    st.caption(f"New York time: {hive_sig['timestamp_ny']}")
+
+    cols = st.columns(4)
+    cols[0].metric("Regime", hive_sig["regime"])
+    cols[1].metric("Target HIVE Alloc", pct(hive_sig["target_hive_alloc"]))
+    cols[2].metric("VIX", f"{hive_sig['vix']:.2f}")
+    cols[3].metric("HIVE RSI14", f"{hive_sig['hive_rsi14']:.1f}")
+
+    cols = st.columns(4)
+    cols[0].metric("HIVE", f"${hive_sig['hive']:.2f}")
+    cols[1].metric("HIVE MA20", f"${hive_sig['hive_ma20']:.2f}")
+    cols[2].metric("HIVE MA50", f"${hive_sig['hive_ma50']:.2f}")
+    cols[3].metric("HIVE Pullback from 20D High", pct(hive_sig["hive_pullback_from_high20"]))
+
+    cols = st.columns(3)
+    cols[0].metric("BTC", f"${hive_sig['btc']:,.0f}")
+    cols[1].metric("BTC MA50", f"${hive_sig['btc_ma50']:,.0f}")
+    cols[2].metric("BTC MA200", f"${hive_sig['btc_ma200']:,.0f}")
+
+    st.line_chart(hive_df[["HIVE", "HIVE_MA20", "HIVE_MA50"]].tail(180))
+    st.line_chart(btc_df[["BTC", "BTC_MA50", "BTC_MA200"]].tail(180))
+
+    st.subheader("Weekly HIVE / SPY Brief")
+    st.caption("Optional. Calls Claude only when you press the button. Includes recent public HIVE/Bitcoin-mining headlines.")
+    if st.button("Generate weekly HIVE/SPY brief", type="primary", key="hive_spy_brief"):
+        with st.spinner("Generating weekly brief..."):
+            news_items = fetch_crypto_news()
+            st.markdown(generate_hive_spy_brief(spy_sig, hive_sig, news_items))
+            if news_items:
+                with st.expander("Headlines used for this brief"):
+                    for item in news_items:
+                        date = f"{item['published']} | " if item.get("published") else ""
+                        st.write(f"{item['symbol']}: {date}{item['title']}")
+
+    st.divider()
+    st.subheader("Recent Data")
+    st.dataframe(hive_df.tail(20).round(2), use_container_width=True)
+
+    st.download_button(
+        "Download JSON signal",
+        data=json.dumps({"spy_core": spy_sig, "hive_satellite": hive_sig}, indent=2),
+        file_name="hive_spy_manual_signal.json",
+        mime="application/json",
+        key="hive_spy_download",
+    )
+
+
+def render_dashboard() -> None:
+    st.title("Signal Dashboard")
+
+    if st.button("Refresh market data"):
+        st.cache_data.clear()
+        st.rerun()
+
+    soxs_tab, hive_spy_tab = st.tabs(["SOXS Hedge", "HIVE / SPY Core-Satellite"])
+    with soxs_tab:
+        render_soxs_tab()
+    with hive_spy_tab:
+        render_hive_spy_tab()
 
 
 if password_gate():
