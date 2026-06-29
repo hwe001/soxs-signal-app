@@ -128,12 +128,11 @@ def main() -> None:
         return
 
     key_id, secret_key = load_credentials()
-    trading_client = TradingClient(key_id, secret_key, paper=True)
+    paper_account = True
+    trading_client = TradingClient(key_id, secret_key, paper=paper_account)
     data_client = StockHistoricalDataClient(key_id, secret_key)
 
     account = trading_client.get_account()
-    if not account.is_paper:
-        sys.exit("Refusing to run: connected account is not a paper account.")
     equity = float(account.equity)
 
     if args.cancel_open_orders and args.execute:
@@ -143,7 +142,7 @@ def main() -> None:
     sig = classify_signal(row)
 
     print("=== QQQ + SQQQ Hedge Paper Runner ===")
-    print(f"Execute orders: {args.execute} | Alpaca paper account: {account.is_paper}")
+    print(f"Execute orders: {args.execute} | Alpaca paper client: {paper_account}")
     print(f"Regime: {sig['regime']} | Confidence: {sig['confidence']}")
     print(f"Reason: {sig['reason']}")
     print(f"Account equity: ${equity:,.2f} | Buying power: ${float(account.buying_power):,.2f}")
