@@ -6,7 +6,7 @@ Strategy (backtested over 10 years, see repo history for the analysis):
 - No QQQ is ever held. QQQ's 50-day trend is used purely as an external
   signal to gate a short SOXS position sized as a fraction of NAV; the rest
   of the book sits in cash.
-- When QQQ is above its 50-day MA, hold a 40% short SOXS position,
+- When QQQ is above its 50-day MA, hold a 60% short SOXS position,
   harvesting leveraged-ETF decay.
 - When QQQ loses its 50-day trend, cut the short back to a 15% floor
   rather than fully covering it.
@@ -14,11 +14,18 @@ Strategy (backtested over 10 years, see repo history for the analysis):
 This intentionally skips VIX-band gating, spike/fade entry timing, and an
 RSI throttle — consistent with the QQQ/SQQQ overlay backtest, a single
 50-day trend filter captured nearly all of the available risk reduction
-here too. Against the original elaborate SOXS-only logic (VIX bands +
-spike/fade + RSI throttle), this simpler design has a lower CAGR (29.1%
-vs 33.4%) but a better Sharpe (0.98 vs 0.95), better Calmar (0.72 vs 0.70),
-and a much shallower max drawdown (-40.6% vs -47.9%) over the same
-2016-2026 window.
+here too. At 60%/15% sizing this backtests to 38.7% CAGR / -53.4% max
+drawdown / 0.96 Sharpe / 0.72 Calmar over 2016-2026 — same Calmar as the
+40%/15% sizing (0.72) but a much deeper drawdown, so this is a pure
+risk/return dial, not a free upgrade.
+
+Dividend/distribution handling: prices are fetched dividend-adjusted
+(Yahoo's adjusted close, i.e. `auto_adjust=True`). For a short position,
+`-pct_change(adjusted_close)` already nets the ex-distribution price-drop
+benefit against the payment-in-lieu-of-dividend owed to the share lender,
+so the short's economic return is correct without a separate adjustment.
+The cost of borrowing the shares (stock-loan fee) is a distinct cost and
+is modeled separately in the backtest, not in this dashboard.
 
 Public-safe version:
 - No Alpaca integration
@@ -42,7 +49,7 @@ CORE_SYMBOL = "QQQ"
 SHORT_SYMBOL = "SOXS"
 VIX_SYMBOL = "^VIX"
 
-NORMAL_SHORT_ALLOC = 0.40
+NORMAL_SHORT_ALLOC = 0.60
 TREND_BROKEN_SHORT_ALLOC = 0.15
 
 QQQ_TREND_LOOKBACK = 50
@@ -133,7 +140,7 @@ def classify_signal(row: pd.Series) -> dict:
         )
     return signal(
         "normal", "HOLD / ADD SOXS SHORT TOWARD TARGET", NORMAL_SHORT_ALLOC, "medium",
-        "QQQ is above its 50-day trend; hold the full 40% short SOXS position to harvest "
+        "QQQ is above its 50-day trend; hold the full 60% short SOXS position to harvest "
         "leveraged-ETF decay. No QQQ is held; the rest of the book is cash.", row,
     )
 

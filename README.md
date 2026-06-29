@@ -47,26 +47,30 @@ thin at this floor size.
 ### Cash + Short SOXS Core (`streamlit_soxs_core_app.py`)
 
 No QQQ is ever held. QQQ's 50-day trend is used purely as an external
-signal: short SOXS at a fixed 40% weight whenever QQQ is above its 50-day
+signal: short SOXS at a fixed 60% weight whenever QQQ is above its 50-day
 MA, cut back to a 15% floor (not fully covered) when the trend breaks. The
 rest of the book sits in cash.
 
+Short-side dividends: prices are dividend-adjusted (Yahoo's adjusted
+close), so `-pct_change(adjusted_close)` already nets the ex-distribution
+price-drop benefit against the payment-in-lieu-of-dividend owed to the
+share lender. No separate dividend adjustment is needed; the stock-loan
+borrow fee is a distinct, separately modeled cost.
+
 This is a simplified, capital-efficient sibling of `streamlit_signal_app.py`
 (the original VIX-band + spike/fade + RSI-throttle SOXS logic). Backtested
-over the same 2016-2026 window, the single 50-day trend filter trades a
-lower CAGR for a better risk profile across every other metric:
+over the same 2016-2026 window:
 
 | Strategy | CAGR | Max DD | Sharpe | Calmar |
 |---|---|---|---|---|
 | Original elaborate SOXS logic (VIX bands + spike/fade + RSI) | 33.4% | -47.9% | 0.95 | 0.70 |
-| Simplified 40%/15% trend-filter (this app) | 29.1% | -40.6% | 0.98 | 0.72 |
+| Simplified 40%/15% trend-filter | 29.1% | -40.6% | 0.98 | 0.72 |
+| Simplified 60%/15% trend-filter (this app) | 38.7% | -53.4% | 0.96 | 0.72 |
 | Buy & hold QQQ (reference) | 21.6% | -35.1% | 0.99 | 0.61 |
 
-Sizing is a dial: a 50%/20% version of the same filter pushes CAGR to 36.0%
-(Calmar 0.73) but widens the drawdown to -49.1%, on par with the original
-elaborate logic's drawdown while beating its CAGR and Calmar — the 40%/15%
-setting here was chosen for the better drawdown control, not because it's
-the only viable sizing.
+Sizing is a pure risk/return dial here, not a free upgrade: 60%/15% matches
+the 40%/15% Calmar (0.72) at a notably higher CAGR, but the max drawdown
+is deeper than even the original elaborate logic's (-53.4% vs -47.9%).
 
 ## Streamlit Secrets
 
