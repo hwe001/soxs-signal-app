@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 """
-Streamlit Cash + Short SOXS Core Manual Signal Dashboard.
+Streamlit QQQ Core + Short SOXS Overlay Manual Signal Dashboard.
 
 Strategy (backtested over 10 years, see repo history for the analysis):
-- No QQQ is ever held. QQQ's 50-day trend is used purely as an external
-  signal to gate a short SOXS position sized as a fraction of NAV; the rest
-  of the book sits in cash.
-- When QQQ is above its 50-day MA, hold a 60% short SOXS position,
-  harvesting leveraged-ETF decay.
-- When QQQ loses its 50-day trend, cut the short back to a 15% floor
-  rather than fully covering it.
+- Core leg: long QQQ at a fixed 40% weight, held regardless of regime.
+- Overlay leg: short SOXS at a fixed 60% weight whenever QQQ is above its
+  50-day MA, harvesting leveraged-ETF decay. When the trend breaks, the
+  overlay is cut back to a 15% floor rather than fully covered.
+- The remainder of NAV (40-45% depending on regime) sits in cash.
 
 This intentionally skips VIX-band gating, spike/fade entry timing, and an
 RSI throttle — consistent with the QQQ/SQQQ overlay backtest, a single
 50-day trend filter captured nearly all of the available risk reduction
-here too. At 60%/15% sizing this backtests to 38.7% CAGR / -53.4% max
-drawdown / 0.96 Sharpe / 0.72 Calmar over 2016-2026 — same Calmar as the
-40%/15% sizing (0.72) but a much deeper drawdown, so this is a pure
-risk/return dial, not a free upgrade.
+here too. Adding the 40% QQQ core to a 60%/15% SOXS-only overlay actually
+improves risk-adjusted returns (Sharpe 1.01 vs 0.96, Calmar 0.81 vs 0.72)
+because QQQ-long and SOXS-short are not perfectly correlated (broad market
+vs. semiconductor-sector decay), even though it raises CAGR to 46.7% and
+deepens max drawdown to -57.7% over the 2016-2026 window.
 
 Dividend/distribution handling: prices are fetched dividend-adjusted
-(Yahoo's adjusted close, i.e. `auto_adjust=True`). For a short position,
+(Yahoo's adjusted close, i.e. `auto_adjust=True`). For the short SOXS leg,
 `-pct_change(adjusted_close)` already nets the ex-distribution price-drop
 benefit against the payment-in-lieu-of-dividend owed to the share lender,
 so the short's economic return is correct without a separate adjustment.
@@ -49,13 +48,15 @@ CORE_SYMBOL = "QQQ"
 SHORT_SYMBOL = "SOXS"
 VIX_SYMBOL = "^VIX"
 
+CORE_ALLOC = 0.40
+
 NORMAL_SHORT_ALLOC = 0.60
 TREND_BROKEN_SHORT_ALLOC = 0.15
 
 QQQ_TREND_LOOKBACK = 50
 
 
-st.set_page_config(page_title="Cash + Short SOXS Signal", page_icon="🩳", layout="wide")
+st.set_page_config(page_title="QQQ Core + SOXS Overlay Signal", page_icon="🩳", layout="wide")
 
 
 def get_secret(name: str, default: str = "") -> str:
@@ -106,18 +107,20 @@ def build_data() -> pd.DataFrame:
 
 def signal(
     regime: str,
-    action: str,
+    overlay_action: str,
     short_alloc: float,
     confidence: str,
     reason: str,
     row: pd.Series,
 ) -> dict:
-    cash_alloc = 1.0 - short_alloc
+    cash_alloc = 1.0 - CORE_ALLOC - short_alloc
     return {
         "timestamp_ny": datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S"),
         "regime": regime,
-        "action": action,
-        "target_short_alloc": short_alloc,
+        "core_action": "HOLD CORE QQQ",
+        "core_target_alloc": CORE_ALLOC,
+        "overlay_action": overlay_action,
+        "overlay_target_short_alloc": short_alloc,
         "target_cash_alloc": cash_alloc,
         "confidence": confidence,
         "reason": reason,
@@ -135,13 +138,13 @@ def classify_signal(row: pd.Series) -> dict:
     if qqq_below_ma50:
         return signal(
             "trend_broken", "REDUCE SOXS SHORT TOWARD FLOOR", TREND_BROKEN_SHORT_ALLOC, "high",
-            "QQQ is below its 50-day trend; cut the short SOXS position back to a 15% floor "
-            "rather than fully covering it. No QQQ is held; the rest of the book is cash.", row,
+            "QQQ is below its 50-day trend; cut the short SOXS overlay back to a 15% floor "
+            "rather than fully covering it. The 40% QQQ core is held unchanged.", row,
         )
     return signal(
         "normal", "HOLD / ADD SOXS SHORT TOWARD TARGET", NORMAL_SHORT_ALLOC, "medium",
-        "QQQ is above its 50-day trend; hold the full 60% short SOXS position to harvest "
-        "leveraged-ETF decay. No QQQ is held; the rest of the book is cash.", row,
+        "QQQ is above its 50-day trend; hold the full 60% short SOXS overlay to harvest "
+        "leveraged-ETF decay alongside the 40% QQQ core.", row,
     )
 
 
@@ -150,11 +153,8 @@ def pct(x: float) -> str:
 
 
 def render_dashboard() -> None:
-    st.title("Cash + Short SOXS Core Signal")
-    st.caption(
-        "Manual guide only. No broker connection. No order execution. "
-        "No QQQ is ever held; QQQ is used only as a trend signal."
-    )
+    st.title("QQQ Core + Short SOXS Overlay Signal")
+    st.caption("Manual guide only. No broker connection. No order execution.")
 
     if st.button("Refresh market data"):
         st.cache_data.clear()
@@ -163,18 +163,18 @@ def render_dashboard() -> None:
     df = build_data()
     sig = classify_signal(df.iloc[-1])
 
-    st.subheader(sig["action"])
+    st.subheader(sig["overlay_action"])
     st.write(sig["reason"])
-    st.caption(f"New York time: {sig['timestamp_ny']}")
+    st.caption(f"Core leg: {sig['core_action']} | New York time: {sig['timestamp_ny']}")
 
     cols = st.columns(4)
     cols[0].metric("Regime", sig["regime"])
-    cols[1].metric("Short SOXS Target", pct(sig["target_short_alloc"]))
-    cols[2].metric("Cash Target", pct(sig["target_cash_alloc"]))
-    cols[3].metric("Confidence", sig["confidence"])
+    cols[1].metric("Core QQQ Target", pct(sig["core_target_alloc"]))
+    cols[2].metric("Overlay SOXS Short Target", pct(sig["overlay_target_short_alloc"]))
+    cols[3].metric("Cash Target", pct(sig["target_cash_alloc"]))
 
     cols = st.columns(4)
-    cols[0].metric("QQQ (signal only)", f"${sig['qqq']:.2f}")
+    cols[0].metric("QQQ", f"${sig['qqq']:.2f}")
     cols[1].metric("QQQ MA50", f"${sig['qqq_ma50']:.2f}")
     cols[2].metric("QQQ Below MA50", "Yes" if sig["qqq_below_ma50"] else "No")
     cols[3].metric("VIX (context only)", f"{sig['vix']:.2f}")

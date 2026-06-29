@@ -44,12 +44,13 @@ market would have cost -50.1% vs. buy-and-hold's -32.6% — higher
 absolute return, but the risk-adjusted edge over plain buy-and-hold is
 thin at this floor size.
 
-### Cash + Short SOXS Core (`streamlit_soxs_core_app.py`)
+### QQQ Core + Short SOXS Overlay (`streamlit_soxs_core_app.py`)
 
-No QQQ is ever held. QQQ's 50-day trend is used purely as an external
-signal: short SOXS at a fixed 60% weight whenever QQQ is above its 50-day
-MA, cut back to a 15% floor (not fully covered) when the trend breaks. The
-rest of the book sits in cash.
+Core leg: long QQQ at a fixed 40% weight, held regardless of regime.
+
+Overlay leg: short SOXS at a fixed 60% weight whenever QQQ is above its
+50-day MA, cut back to a 15% floor (not fully covered) when the trend
+breaks. The remainder of NAV (40-45% depending on regime) sits in cash.
 
 Short-side dividends: prices are dividend-adjusted (Yahoo's adjusted
 close), so `-pct_change(adjusted_close)` already nets the ex-distribution
@@ -57,20 +58,25 @@ price-drop benefit against the payment-in-lieu-of-dividend owed to the
 share lender. No separate dividend adjustment is needed; the stock-loan
 borrow fee is a distinct, separately modeled cost.
 
-This is a simplified, capital-efficient sibling of `streamlit_signal_app.py`
-(the original VIX-band + spike/fade + RSI-throttle SOXS logic). Backtested
-over the same 2016-2026 window:
+This is a simplified sibling of `streamlit_signal_app.py` (the original
+VIX-band + spike/fade + RSI-throttle SOXS logic). Backtested over the same
+2016-2026 window:
 
 | Strategy | CAGR | Max DD | Sharpe | Calmar |
 |---|---|---|---|---|
 | Original elaborate SOXS logic (VIX bands + spike/fade + RSI) | 33.4% | -47.9% | 0.95 | 0.70 |
-| Simplified 40%/15% trend-filter | 29.1% | -40.6% | 0.98 | 0.72 |
-| Simplified 60%/15% trend-filter (this app) | 38.7% | -53.4% | 0.96 | 0.72 |
+| Cash + 40%/15% SOXS-only trend-filter | 29.1% | -40.6% | 0.98 | 0.72 |
+| Cash + 60%/15% SOXS-only trend-filter | 38.7% | -53.4% | 0.96 | 0.72 |
+| 40% QQQ core + 60%/15% SOXS overlay (this app) | 46.7% | -57.7% | 1.01 | 0.81 |
 | Buy & hold QQQ (reference) | 21.6% | -35.1% | 0.99 | 0.61 |
 
-Sizing is a pure risk/return dial here, not a free upgrade: 60%/15% matches
-the 40%/15% Calmar (0.72) at a notably higher CAGR, but the max drawdown
-is deeper than even the original elaborate logic's (-53.4% vs -47.9%).
+Adding the 40% QQQ core to the 60%/15% SOXS overlay isn't just added
+leverage — it improves Sharpe and Calmar over the SOXS-only version
+(1.01/0.81 vs 0.96/0.72) because long QQQ and short SOXS aren't perfectly
+correlated (broad market vs. semiconductor-sector decay). It still raises
+CAGR and deepens the max drawdown beyond the original elaborate logic's,
+so this remains a higher-risk configuration overall, not a strict
+improvement on every axis.
 
 ## Streamlit Secrets
 
