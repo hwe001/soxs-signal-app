@@ -2,7 +2,7 @@
 
 Public Streamlit dashboards for manual trading signal checks.
 
-Both apps:
+All apps:
 
 - Pull public market data from Yahoo Finance.
 - Show a manual signal for entry/cover decisions.
@@ -44,6 +44,30 @@ market would have cost -50.1% vs. buy-and-hold's -32.6% — higher
 absolute return, but the risk-adjusted edge over plain buy-and-hold is
 thin at this floor size.
 
+### Cash + Short SOXS Core (`streamlit_soxs_core_app.py`)
+
+No QQQ is ever held. QQQ's 50-day trend is used purely as an external
+signal: short SOXS at a fixed 40% weight whenever QQQ is above its 50-day
+MA, cut back to a 15% floor (not fully covered) when the trend breaks. The
+rest of the book sits in cash.
+
+This is a simplified, capital-efficient sibling of `streamlit_signal_app.py`
+(the original VIX-band + spike/fade + RSI-throttle SOXS logic). Backtested
+over the same 2016-2026 window, the single 50-day trend filter trades a
+lower CAGR for a better risk profile across every other metric:
+
+| Strategy | CAGR | Max DD | Sharpe | Calmar |
+|---|---|---|---|---|
+| Original elaborate SOXS logic (VIX bands + spike/fade + RSI) | 33.4% | -47.9% | 0.95 | 0.70 |
+| Simplified 40%/15% trend-filter (this app) | 29.1% | -40.6% | 0.98 | 0.72 |
+| Buy & hold QQQ (reference) | 21.6% | -35.1% | 0.99 | 0.61 |
+
+Sizing is a dial: a 50%/20% version of the same filter pushes CAGR to 36.0%
+(Calmar 0.73) but widens the drawdown to -49.1%, on par with the original
+elaborate logic's drawdown while beating its CAGR and Calmar — the 40%/15%
+setting here was chosen for the better drawdown control, not because it's
+the only viable sizing.
+
 ## Streamlit Secrets
 
 Add this app secret in Streamlit Cloud:
@@ -57,4 +81,5 @@ SIGNAL_APP_PASSWORD = "your-password"
 ```text
 streamlit_signal_app.py
 streamlit_qqq_sqqq_app.py
+streamlit_soxs_core_app.py
 ```
