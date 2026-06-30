@@ -22,6 +22,13 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from hive_qqq_strategy import (
+    BTC_TREND_LOOKBACK,
+    HIVE_LOOKBACK,
+    QQQ_TREND_LOOKBACK as QQQ_MA50_LOOKBACK,
+    classify_signal as classify_hive_qqq_signal,
+)
+
 
 CORE_SYMBOL = "QQQ"
 SHORT_SYMBOL = "SOXS"
@@ -315,45 +322,129 @@ def generate_weekly_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -
     return content[0].get("text", "").strip()
 
 
-def render_dashboard() -> None:
-    st.title("SOXS Manual Signal")
-    st.caption("Manual guide only. No broker connection. No order execution.")
+@st.cache_data(ttl=300)
+def build_hive_qqq_data() -> pd.DataFrame:
+    qqq = fetch_history("QQQ")
+    hive = fetch_history("HIVE")
+    btc = fetch_history("BTC-USD")
+    vix = fetch_history("^VIX")
+    df = pd.DataFrame({"QQQ": qqq, "HIVE": hive, "BTC": btc, "VIX": vix}).sort_index()
+    df = df[df["QQQ"].notna()].ffill().dropna()
+    df["QQQ_MA50"] = df["QQQ"].rolling(QQQ_MA50_LOOKBACK).mean()
+    df["BTC_MA20"] = df["BTC"].rolling(BTC_TREND_LOOKBACK).mean()
+    df["HIVE_MA20"] = df["HIVE"].rolling(HIVE_LOOKBACK).mean()
+    return df.dropna()
 
-    if st.button("Refresh market data"):
-        st.cache_data.clear()
-        st.rerun()
 
-    df = build_data()
-    sig = classify_signal(df.iloc[-1])
+def build_hive_qqq_prompt(df: pd.DataFrame, sig: dict, news_items: list[dict]) -> str:
+    recent = df.tail(6)
+    qqq_week = recent["QQQ"].iloc[-1] / recent["QQQ"].iloc[0] - 1.0
+    hive_week = recent["HIVE"].iloc[-1] / recent["HIVE"].iloc[0] - 1.0
+    btc_week = recent["BTC"].iloc[-1] / recent["BTC"].iloc[0] - 1.0
+    vix_change = recent["VIX"].iloc[-1] - recent["VIX"].iloc[0]
 
-    st.subheader(sig["action"])
+    return f"""
+You are writing a concise weekly market brief for a private manual trading dashboard.
+The strategy holds QQQ long-term (50% core), trades HIVE equity (0-30%) based on Bitcoin trend,
+and uses HIVE options to harvest premium that offsets QQQ cost basis over time.
+
+Do not give personalized financial advice. Do not tell the user to trade immediately.
+Explain the signal and the risk posture in plain English. Mention BTC, HIVE, and QQQ by name.
+
+Current signal:
+- Regime: {sig["regime"]}
+- QQQ action: {sig["qqq_action"]} (target {pct(sig["qqq_target_alloc"])})
+- HIVE action: {sig["hive_action"]} (target {pct(sig["hive_target_alloc"])})
+- Target cash: {pct(sig["target_cash_alloc"])}
+- Options advisory: {sig["options_action"]}
+- Confidence: {sig["confidence"]}
+- Reason: {sig["reason"]}
+
+Key indicators:
+- BTC: ${sig["btc"]:,.0f}  MA20: ${sig["btc_ma20"]:,.0f}  ({'ABOVE' if sig["btc_above_ma20"] else 'BELOW'} 20-day MA)
+- QQQ: ${sig["qqq"]:.2f}  MA50: ${sig["qqq_ma50"]:.2f}  ({'ABOVE' if sig["qqq_above_ma50"] else 'BELOW'} 50-day MA)
+- HIVE: ${sig["hive"]:.4f}  MA20: ${sig["hive_ma20"]:.4f}  ({'ABOVE' if sig["hive_above_ma20"] else 'BELOW'} 20-day MA)
+- VIX: {sig["vix"]:.2f}
+
+Last roughly one trading week:
+- QQQ return: {pct(qqq_week)}
+- HIVE return: {pct(hive_week)}
+- BTC return: {pct(btc_week)}
+- VIX change: {vix_change:+.2f}
+
+Recent AI / Bitcoin / semiconductor headlines:
+{format_news_for_prompt(news_items)}
+
+Write exactly four short sections:
+1. Weekly read (BTC, HIVE, QQQ context)
+2. Current signal (what to do and why)
+3. Risk watch (what could break the thesis)
+4. What would change the signal
+""".strip()
+
+
+def generate_hive_qqq_brief(df: pd.DataFrame, sig: dict, news_items: list[dict]) -> str:
+    api_key = get_secret("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "Add ANTHROPIC_API_KEY in Streamlit secrets to enable the weekly AI brief."
+
+    model = get_secret("CLAUDE_MODEL", CLAUDE_MODEL)
+    payload = {
+        "model": model,
+        "max_tokens": 900,
+        "messages": [{"role": "user", "content": build_hive_qqq_prompt(df, sig, news_items)}],
+    }
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Claude API error {exc.code}: {detail}") from exc
+
+    content = data.get("content", [])
+    if not content:
+        raise RuntimeError("Claude API returned no text.")
+    return content[0].get("text", "").strip()
+
+
+def render_hive_qqq_tab() -> None:
+    df = build_hive_qqq_data()
+    sig = classify_hive_qqq_signal(df.iloc[-1])
+
+    st.subheader(sig["hive_action"])
     st.write(sig["reason"])
     st.caption(f"New York time: {sig['timestamp_ny']}")
 
     cols = st.columns(4)
     cols[0].metric("Regime", sig["regime"])
-    cols[1].metric("Target SOXS Short", pct(sig["target_short_alloc"]))
-    cols[2].metric("VIX", f"{sig['vix']:.2f}")
-    cols[3].metric("Confidence", sig["confidence"])
+    cols[1].metric("QQQ Target", pct(sig["qqq_target_alloc"]))
+    cols[2].metric("HIVE Target", pct(sig["hive_target_alloc"]))
+    cols[3].metric("Cash Target", pct(sig["target_cash_alloc"]))
 
     cols = st.columns(4)
-    cols[0].metric("QQQ", f"${sig['qqq']:.2f}")
-    cols[1].metric("QQQ MA20", f"${sig['qqq_ma20']:.2f}")
-    cols[2].metric("QQQ RSI14", f"{sig['qqq_rsi14']:.1f}")
-    cols[3].metric("QQQ Below MA20", "Yes" if sig["qqq_below_ma20"] else "No")
+    cols[0].metric("QQQ", f"${sig['qqq']:.2f}", f"MA50 ${sig['qqq_ma50']:.2f}")
+    cols[1].metric("HIVE", f"${sig['hive']:.4f}", f"MA20 ${sig['hive_ma20']:.4f}")
+    cols[2].metric("BTC", f"${sig['btc']:,.0f}", f"MA20 ${sig['btc_ma20']:,.0f}")
+    cols[3].metric("VIX", f"{sig['vix']:.2f}")
 
-    cols = st.columns(4)
-    cols[0].metric("SOXS", f"${sig['soxs']:.2f}")
-    cols[1].metric("SOXS MA5", f"${sig['soxs_ma5']:.2f}")
-    cols[2].metric("SOXS 20D High", f"${sig['soxs_high20']:.2f}")
-    cols[3].metric("SOXS Pullback", pct(sig["soxs_pullback_from_high20"]))
+    st.info(f"**Options advisory:** {sig['options_action']}\n\n{sig['options_detail']}")
 
     st.subheader("Weekly AI Brief")
-    st.caption("Optional. Calls Claude only when you press the button. Includes recent public AI-sector headlines.")
-    if st.button("Generate weekly AI brief", type="primary"):
+    st.caption("Optional. Calls Claude when you press the button. Incorporates BTC, HIVE, and AI-sector headlines.")
+    if st.button("Generate HIVE + QQQ weekly brief", type="primary"):
         with st.spinner("Generating weekly brief..."):
             news_items = fetch_ai_news()
-            st.markdown(generate_weekly_brief(df, sig, news_items))
+            st.markdown(generate_hive_qqq_brief(df, sig, news_items))
             if news_items:
                 with st.expander("Headlines used for this brief"):
                     for item in news_items:
@@ -361,19 +452,91 @@ def render_dashboard() -> None:
                         st.write(f"{item['symbol']}: {date}{item['title']}")
 
     st.divider()
-    st.line_chart(df[["QQQ", "QQQ_MA20"]].tail(80))
-    st.line_chart(df[["SOXS", "SOXS_MA5", "SOXS_MA20"]].tail(80))
+    st.line_chart(df[["QQQ", "QQQ_MA50"]].tail(80))
+    st.line_chart(df[["HIVE", "HIVE_MA20"]].tail(80))
+    st.line_chart(df[["BTC", "BTC_MA20"]].tail(80))
     st.line_chart(df[["VIX"]].tail(80))
 
     st.subheader("Recent Data")
-    st.dataframe(df.tail(20).round(2), use_container_width=True)
+    display_cols = ["QQQ", "QQQ_MA50", "HIVE", "HIVE_MA20", "BTC", "BTC_MA20", "VIX"]
+    st.dataframe(df[display_cols].tail(20).round(2), use_container_width=True)
 
     st.download_button(
-        "Download JSON signal",
+        "Download HIVE+QQQ JSON signal",
         data=pd.Series(sig).to_json(indent=2),
-        file_name="soxs_manual_signal.json",
+        file_name="hive_qqq_signal.json",
         mime="application/json",
     )
+
+
+def render_dashboard() -> None:
+    st.title("Signal Dashboard")
+    st.caption("Manual guide only. No broker connection. No order execution.")
+
+    if st.button("Refresh market data"):
+        st.cache_data.clear()
+        st.rerun()
+
+    tab_soxs, tab_hive = st.tabs(["SOXS Short Overlay", "HIVE + QQQ Core"])
+
+    with tab_soxs:
+        df = build_data()
+        sig = classify_signal(df.iloc[-1])
+
+        st.subheader(sig["action"])
+        st.write(sig["reason"])
+        st.caption(f"New York time: {sig['timestamp_ny']}")
+
+        cols = st.columns(4)
+        cols[0].metric("Regime", sig["regime"])
+        cols[1].metric("Target SOXS Short", pct(sig["target_short_alloc"]))
+        cols[2].metric("VIX", f"{sig['vix']:.2f}")
+        cols[3].metric("Confidence", sig["confidence"])
+
+        cols = st.columns(4)
+        cols[0].metric("QQQ", f"${sig['qqq']:.2f}")
+        cols[1].metric("QQQ MA20", f"${sig['qqq_ma20']:.2f}")
+        cols[2].metric("QQQ RSI14", f"{sig['qqq_rsi14']:.1f}")
+        cols[3].metric("QQQ Below MA20", "Yes" if sig["qqq_below_ma20"] else "No")
+
+        cols = st.columns(4)
+        cols[0].metric("SOXS", f"${sig['soxs']:.2f}")
+        cols[1].metric("SOXS MA5", f"${sig['soxs_ma5']:.2f}")
+        cols[2].metric("SOXS 20D High", f"${sig['soxs_high20']:.2f}")
+        cols[3].metric("SOXS Pullback", pct(sig["soxs_pullback_from_high20"]))
+
+        st.subheader("Weekly AI Brief")
+        st.caption("Optional. Calls Claude only when you press the button. Includes recent public AI-sector headlines.")
+        if st.button("Generate weekly AI brief", type="primary"):
+            with st.spinner("Generating weekly brief..."):
+                news_items = fetch_ai_news()
+                st.markdown(generate_weekly_brief(df, sig, news_items))
+                if news_items:
+                    with st.expander("Headlines used for this brief"):
+                        for item in news_items:
+                            date = f"{item['published']} | " if item.get("published") else ""
+                            st.write(f"{item['symbol']}: {date}{item['title']}")
+
+        st.divider()
+        st.line_chart(df[["QQQ", "QQQ_MA20"]].tail(80))
+        st.line_chart(df[["SOXS", "SOXS_MA5", "SOXS_MA20"]].tail(80))
+        st.line_chart(df[["VIX"]].tail(80))
+
+        st.subheader("Recent Data")
+        st.dataframe(df.tail(20).round(2), use_container_width=True)
+
+        st.download_button(
+            "Download JSON signal",
+            data=pd.Series(sig).to_json(indent=2),
+            file_name="soxs_manual_signal.json",
+            mime="application/json",
+        )
+
+    with tab_hive:
+        try:
+            render_hive_qqq_tab()
+        except Exception as exc:
+            st.error(f"Could not generate HIVE + QQQ signal: {exc}")
 
 
 if password_gate():
