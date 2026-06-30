@@ -2,10 +2,11 @@ name: Run QQQ SOXS Core Paper Bot
 
 on:
   schedule:
-    # 3:45 PM New York during daylight saving time.
-    - cron: "45 19 * * 1-5"
-    # 3:45 PM New York during standard time.
-    - cron: "45 20 * * 1-5"
+    # Near 3:45-3:59 PM New York during daylight saving time.
+    # GitHub scheduled runs can start late, so use a few near-close attempts.
+    - cron: "45,50,55 19 * * 1-5"
+    # Near 3:45-3:59 PM New York during standard time.
+    - cron: "45,50,55 20 * * 1-5"
   workflow_dispatch:
     inputs:
       submit_paper_orders:
