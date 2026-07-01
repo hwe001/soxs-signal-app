@@ -55,3 +55,22 @@ For backward compatibility, the older `SQQQ_ALPACA_*` and
 `SQQQ_EXECUTE_ORDERS` secrets still work. Set `SOXS_CORE_EXECUTE_ORDERS` to
 `"true"` only when scheduled workflow runs should submit Alpaca paper orders.
 The manual workflow can also be run as a dry run first.
+
+## QQQ/SOXS Core Tradier Runner
+
+`qqq_sqqq_tradier_paper_trade_runner.py` runs the same strategy against the
+Tradier Brokerage API instead of Alpaca. It defaults to the Tradier sandbox
+environment and to a dry run:
+
+```bash
+export TRADIER_TOKEN="your-sandbox-token"
+export TRADIER_ACCOUNT_ID="your-sandbox-account-number"
+python qqq_sqqq_tradier_paper_trade_runner.py --force-run
+```
+
+- Set `TRADIER_SANDBOX=false` to point at the production Tradier API
+  (`api.tradier.com`) with a real, funded account instead of the sandbox.
+- Pass `--execute` to actually submit orders; without it, the script only
+  prints the computed signal and target orders.
+- Pass `--force-run` to bypass the 3:45-3:59 PM New York rebalance window
+  gate for manual testing.
