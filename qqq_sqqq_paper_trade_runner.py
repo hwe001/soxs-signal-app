@@ -32,6 +32,7 @@ from qqq_sqqq_strategy import CORE_SYMBOL, QQQ_TREND_LOOKBACK, SHORT_SYMBOL, cla
 
 REBALANCE_START_NY = time(15, 45)
 REBALANCE_END_NY = time(15, 59)
+LATE_SCHEDULE_END_NY = time(18, 30)
 
 
 def load_credentials() -> tuple[str, str]:
@@ -113,7 +114,10 @@ def should_run_now(force_run: bool) -> bool:
         return False
     if REBALANCE_START_NY <= now_ny.time() <= REBALANCE_END_NY:
         return True
-    print("Outside 3:45-3:59 PM New York rebalance window. Skipping.")
+    if REBALANCE_END_NY < now_ny.time() <= LATE_SCHEDULE_END_NY:
+        print("GitHub scheduled run started late; accepting delayed near-close rebalance.")
+        return True
+    print("Outside 3:45-6:30 PM New York rebalance window. Skipping.")
     return False
 
 
